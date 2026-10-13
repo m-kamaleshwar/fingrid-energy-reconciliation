@@ -1,0 +1,20 @@
+# Secrets and local settings
+.env
+
+# Run outputs and logs
+output.txt
+api_requests.log
+
+# Scratch and test scripts
+test.py
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors and OS
+.vscode/
+.DS_Store
+Thumbs.db
