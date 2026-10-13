@@ -19,15 +19,18 @@ warnings.filterwarnings(
 )
 
 BASE_URL = "https://data.fingrid.fi/api/datasets/{}/data"
-PAGE_SIZE = 1000
+PAGE_SIZE = 20000           # Fingrid's maximum rows per page
 REQUEST_PAUSE_SECONDS = 2  # Fingrid allows one request every 2 seconds
 
-# Fingrid returns at most 2,000 rows per query, newest first, and reports the
-# capped number as its total. Longer periods therefore lose their OLDEST rows
-# silently. Fetching in chunks keeps every query safely under the cap:
-# 3 days of 3-minute data is at most 1,440 rows.
-API_ROW_CAP = 2000
-CHUNK_DAYS = 3
+# Testing showed that when a query has more than two pages, the API's paging
+# information is wrong: it reports only two pages, and a total covering only
+# those, although later pages still return data. Code that trusts it silently
+# loses the OLDEST rows (pageSize 1,000 gave 2,000 of 2,173 rows for five days,
+# and page 3 held the other 173). So pages are requested until a short page
+# comes back, and the reported total is treated only as a minimum. Chunks keep
+# each query to a single page anyway: 30 days of 3-minute data is at most
+# 14,400 rows, well under 20,000.
+CHUNK_DAYS = 30
 
 # Default period, in UTC. Override with --start and --end on the command line.
 DEFAULT_START = "2026-10-06T00:00:00Z"
@@ -60,34 +63,30 @@ def _fetch_window(dataset_id, start, end, headers):
     params = {"startTime": start, "endTime": end, "pageSize": PAGE_SIZE}
 
     all_rows = []
+    reported_total = None
     page = 1
     while True:
         resp = requests.get(url, headers=headers,
                             params={**params, "page": page}, timeout=30)
         resp.raise_for_status()  # fail loudly on errors such as 401 or 429
         data = resp.json()
-        all_rows.extend(data["data"])
+        rows = data["data"]
+        all_rows.extend(rows)
+        if reported_total is None:
+            reported_total = data.get("pagination", {}).get("total")
 
-        pagination = data.get("pagination", {})
-        if page >= pagination.get("lastPage", 1):
+        # Don't trust the reported page count: a short (or empty) page is the last.
+        if len(rows) < PAGE_SIZE:
             break
         page += 1
         time.sleep(REQUEST_PAUSE_SECONDS)
 
-    # Reconcile against the source: the API reports how many rows exist.
-    total = data.get("pagination", {}).get("total")
-    if total is not None and len(all_rows) != total:
+    # The reported total can be too LOW, but never too high: fewer rows than
+    # reported means something was genuinely lost.
+    if reported_total is not None and len(all_rows) < reported_total:
         raise RuntimeError(
-            f"Dataset {dataset_id}: fetched {len(all_rows)} rows, "
-            f"but the API reports {total}")
-
-    # The total check can't catch the cap, because the API reports the capped
-    # total. A window that reaches the cap may be missing its oldest rows.
-    if len(all_rows) >= API_ROW_CAP:
-        raise RuntimeError(
-            f"Dataset {dataset_id}: {len(all_rows)} rows for {start} to {end} "
-            f"reached the API's {API_ROW_CAP}-row cap, so older rows may be missing. "
-            f"Reduce CHUNK_DAYS.")
+            f"Dataset {dataset_id}: fetched {len(all_rows)} rows for {start} to {end}, "
+            f"but the API reports at least {reported_total}")
 
     df = pd.DataFrame(all_rows, columns=["datasetId", "startTime", "endTime", "value"])
     df["startTime"] = pd.to_datetime(df["startTime"])

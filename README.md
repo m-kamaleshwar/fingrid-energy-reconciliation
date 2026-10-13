@@ -135,7 +135,7 @@ All values are average power in MW. For the border datasets, a positive value me
 
 The figures below cover 1 to 10 October 2026: 4,320 three-minute slots, reconciled independently in Python and Snowflake with identical results.
 
-**1. The API silently drops rows on longer requests.** A single request for five days of North Sweden data returned exactly **2,000 rows**, and the API's own reported total also said 2,000. Five daily requests for the same period returned **2,173**. The API returns at most 2,000 rows per query, newest first, so the oldest 173 rows, about 8%, were silently lost, and a check against the API's total could not catch it. A suspiciously round row count exposed the problem. The pipeline now fetches in 3-day chunks, at most 1,440 rows each, and stops with an error if any query ever reaches the cap.
+**1. The API's paging information understates the data.** A five-day request for North Sweden data, with 1,000 rows per page, reported **2 pages and a total of 2,000 rows**. Code that trusted this stopped after page 2 and silently lost the oldest **173 rows**, about 8%, and a check against the API's reported total couldn't catch it, because it used the same wrong number. A suspiciously round row count exposed the problem. Testing showed the pattern clearly: with 500 rows per page the API reported 1,000 rows, with 1,000 it reported 2,000, and with 20,000 it returned all 2,173, while requesting page 3 directly returned the missing 173 rows. When a query has more than two pages, the reported page count and total cover only the first two. Fingrid's open data team, contacted about the issue, pointed towards further pages and the 20,000-row maximum page size. The pipeline now uses that page size, keeps requesting pages until a short page comes back rather than trusting the reported count, and treats the reported total only as a minimum.
 
 **2. About a fifth of real-time readings are missing.** **924 production readings (21%)** and **829 consumption readings (19%)** were missing.
 
@@ -147,13 +147,13 @@ The figures below cover 1 to 10 October 2026: 4,320 three-minute slots, reconcil
 
 **6. A small, genuine imbalance remains.** **34 of 3,108 complete slots, about 1.1%,** exceeded the 0.5% tolerance, with a maximum difference of **110.57 MW**, about 1.2% of production. These use only original or corrected readings, so they reflect the source data, not this pipeline's processing.
 
-**7. 15-minute averages can mislead.** On 1 to 6 October, the largest 15-minute difference, 168 MW, was more than twice the largest 3-minute difference, although averaging should smooth differences out. The cause is averages built from different numbers of readings, covering different moments. On 6 to 10 October, only **72 of 384 windows (19%)** had all five readings in all six datasets, and **all 9 of the period's 15-minute breaches were in incomplete windows**; complete windows stayed within 37 MW. Excluding incomplete windows would discard most of the data, so the pipeline keeps every window and reports complete and incomplete windows separately.
+**7. 15-minute averages can mislead.** On 1 to 6 October, the largest 15-minute difference, 168 MW, was more than twice the largest 3-minute difference, although averaging should smooth differences out. The cause is averages built from different numbers of readings, covering different moments. Across both periods, only **137 of 864 windows (about 16%)** had all five readings in all six datasets, and **all 17 fifteen-minute breaches were in incomplete windows**, including the 168 MW one. Complete windows never exceeded 37 MW. Excluding incomplete windows would discard most of the data, so the pipeline keeps every window and reports complete and incomplete windows separately.
 
 **8. Missing data can easily pass as real data.** At one point, treating missing border readings as zero created 12 false breaches and a false maximum difference of 1,196 MW. Both pipelines now keep missing values blank, so a gap can never pass as a measurement.
 
 ## How it works
 
-**Extract (Python).** `fingrid_api.py` fetches each dataset in 3-day chunks, follows every page, waits 2 seconds between requests to respect Fingrid's rate limit, and stops on any API error. Each chunk is checked against the total the API reports, and against the 2,000-row cap.
+**Extract (Python).** `fingrid_api.py` fetches each dataset in 30-day chunks with Fingrid's maximum page size of 20,000 rows, so a chunk normally fits on one page. It keeps requesting pages until a short page comes back, rather than trusting the API's page count, waits 2 seconds between requests to respect Fingrid's rate limit, and stops on any API error, or if it receives fewer rows than the API reports.
 
 **Reconcile (pandas).** `reconcile_pandas.py` gives every reading its own 3-minute slot, correcting and labelling the 6-minute records. It joins all datasets onto the **expected grid** of slots, keeps 3-minute and 15-minute data in separate tables, and calculates the balance for each slot against a tolerance of 0.5% of production. Each 15-minute average records how many readings it used, and each window is flagged as complete or incomplete.
 
@@ -169,7 +169,7 @@ The figures below cover 1 to 10 October 2026: 4,320 three-minute slots, reconcil
 fingrid-energy-reconciliation/
 ├── README.md
 ├── requirements.txt
-├── fingrid_api.py              # shared: dataset list, chunked API calls, checks
+├── fingrid_api.py              # shared: dataset list, chunked API calls, robust paging, checks
 ├── reconcile_pandas.py         # reconciliation in pandas
 ├── load_to_snowflake.py        # loads raw API data into Snowflake
 └── sql/
@@ -184,7 +184,7 @@ fingrid-energy-reconciliation/
 
 ## Roadmap
 
-- [x] Extract all eight datasets from the Fingrid API, with paging, error handling and chunking under the row cap
+- [x] Extract all eight datasets from the Fingrid API, with robust paging, error handling and chunking
 - [x] Detect and correct incorrect end times and overlapping intervals
 - [x] Reconcile the energy balance against an expected grid, with tolerance checks
 - [x] Test gap filling, and switch it off on the evidence
