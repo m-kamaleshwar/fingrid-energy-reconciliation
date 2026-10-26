@@ -2,7 +2,7 @@
 
 Does Finland's real-time electricity balance actually add up? This project pulls Fingrid's open grid data, reconciles production, consumption and cross-border flows, and finds out where, and why, the numbers disagree.
 
-> **Status: version 1.1.** Python extracts the data and reconciles it in pandas. The raw data is loaded into Snowflake, where a SQL pipeline repeats the reconciliation independently. Over two test periods, both versions agree on every figure. **Next: rebuilding the Snowflake transformation and tests in dbt.**
+> **Status: version 2.0.** The same 3-minute reconciliation is built three times, independently: in Python with pandas, in Snowflake SQL, and as dbt models on DuckDB with automated tests. All three agree on every figure. **Next: the 15-minute models in dbt, and CI with GitHub Actions.**
 
 ---
 
@@ -50,7 +50,13 @@ export FINGRID_API_KEY=your_key
   ```bash
   python -m pip install -r requirements.txt
   ```
-  Using `python -m pip` makes sure the packages go into the same Python that runs the scripts.
+  Using `python -m pip` makes sure the packages go into the same Python that runs the scripts. This also installs **dbt with the DuckDB adapter**, which includes DuckDB itself.
+- 3.4 Optional but recommended: use a virtual environment, so this project's packages stay separate:
+  ```bash
+  python -m venv .venv
+  .venv\Scripts\Activate.ps1
+  ```
+  On macOS or Linux, activate it with `source .venv/bin/activate`.
 
 ### 4. Set up Snowflake
 
@@ -84,7 +90,20 @@ To keep costs low on a trial, use an **XSMALL** warehouse with **auto-suspend** 
   );
   ```
 
-Dates are in UTC, and the end date is exclusive. Without `--start` and `--end`, both scripts use 6 to 10 October 2026. Any length of period works: the scripts fetch long periods in chunks automatically.
+- 5.4 **Load the raw data into a local DuckDB file,** for the dbt version:
+  ```bash
+  python load_to_duckdb.py --start 2026-10-06T00:00:00Z --end 2026-10-10T00:00:00Z
+  ```
+  This creates `fingrid.duckdb` with the raw data. Like the Snowflake loader, it replaces the period on each run and checks the row count.
+- 5.5 **Build and test the dbt models:**
+  ```bash
+  cd dbt
+  dbt seed --profiles-dir .
+  dbt build --profiles-dir .
+  ```
+  `dbt build` runs the models and all their tests in order. The period is set in `dbt/dbt_project.yml`, or on the command line with `--vars`. Once the data is loaded, this step works entirely offline.
+
+Dates are in UTC, and the end date is exclusive. Without `--start` and `--end`, the scripts use 6 to 10 October 2026. Any length of period works: the scripts fetch long periods in chunks automatically.
 
 ### 6. Check the results
 
@@ -103,6 +122,8 @@ Run the queries in `sql/99_validation_checks.sql`. For 6 to 10 October 2026, you
 | Complete 15-minute windows | 72 of 384 |
 
 The Python summary in `output.txt` should show exactly the same numbers.
+
+**For the dbt version,** run `python verify_duckdb_all_counts.py` from the project folder. It reads the dbt results and prints the same summary: 1,920 slots, 394 and 344 missing readings, 21 slots over tolerance, and a maximum difference of 110.57 MW. `python verify_duckdb.py` lists the slots stored by the tolerance test.
 
 ---
 
@@ -161,7 +182,19 @@ The figures below cover 1 to 10 October 2026: 4,320 three-minute slots, reconcil
 
 **Transform (Snowflake SQL).** Stored procedures repeat the same steps inside the warehouse, in layers: `CORE` normalises and aggregates the readings, `RECON` holds the reconciliation, and `OPS.RUN_FINGRID_PIPELINE` runs everything in order. Every procedure is idempotent by period.
 
-**Cross-checked.** The pandas and Snowflake versions were built independently. For both test periods, they agree exactly on every measure, including missing readings, empty slots, breaches, the maximum difference, and the breakdowns by status and by window completeness.
+**Transform (dbt on DuckDB).** The same reconciliation is rebuilt as dbt models, developed locally on DuckDB, free and fast. `load_to_duckdb.py` loads the raw data, stored in UTC, and the models follow the same layers: **staging** labels each reading with its dataset, **intermediate** applies the end-time correction and builds the expected grid of slots, and the **mart** calculates the balance for every slot. Each rule is a dbt test: one row per slot, no duplicate readings, a complete grid, and a tolerance check. The tolerance test **warns rather than fails**, because real data has genuine breaches, and stores the failing rows in a table for investigation.
+
+**Cross-checked three ways.** The pandas, Snowflake SQL and dbt versions were built independently. For 6 to 10 October 2026, all three agree exactly:
+
+| Measure | pandas | Snowflake SQL | dbt on DuckDB |
+|---|---|---|---|
+| 3-minute slots | 1,920 | 1,920 | 1,920 |
+| Production missing | 394 | 394 | 394 |
+| Consumption missing | 344 | 344 | 344 |
+| Slots over the 0.5% tolerance | 21 | 21 | 21 |
+| Maximum difference | 110.57 MW | 110.57 MW | 110.57 MW |
+
+The pandas and Snowflake versions also agree on a second period, 1 to 6 October, including the breakdowns by status and by 15-minute window completeness.
 
 ## Project structure
 
@@ -172,6 +205,18 @@ fingrid-energy-reconciliation/
 ├── fingrid_api.py              # shared: dataset list, chunked API calls, robust paging, checks
 ├── reconcile_pandas.py         # reconciliation in pandas
 ├── load_to_snowflake.py        # loads raw API data into Snowflake
+├── load_to_duckdb.py           # loads raw API data into a local DuckDB file
+├── verify_duckdb_all_counts.py # prints the dbt results summary, for cross-checking
+├── verify_duckdb.py            # lists the slots stored by the tolerance test
+├── dbt/
+│   ├── dbt_project.yml         # period and tolerance settings, materialisations
+│   ├── profiles.yml            # connection to the local DuckDB file (no secrets)
+│   ├── seeds/                  # list of datasets, IDs and intervals
+│   ├── models/
+│   │   ├── staging/            # raw readings, labelled
+│   │   ├── intermediate/       # end-time correction, expected grid
+│   │   └── marts/              # the 3-minute reconciliation
+│   └── tests/                  # one test per rule
 └── sql/
     ├── 01_setup_database.sql       # database, schemas, raw and reference tables
     ├── 02_core_normalize_3min.sql  # end-time correction (and the unused fill step)
@@ -192,9 +237,12 @@ fingrid-energy-reconciliation/
 - [x] Load raw data into Snowflake, idempotently, with a row-count check
 - [x] Rebuild the reconciliation in Snowflake SQL and cross-check it against pandas on two periods
 - [ ] Compare real-time with measured 15-minute production and consumption
-- [ ] Rebuild the Snowflake transformation as **dbt** models, and turn each finding into a **dbt test**
+- [x] Rebuild the 3-minute reconciliation as **dbt** models on DuckDB, with each rule as a **dbt test**, cross-checked against pandas and Snowflake
+- [ ] Add the 15-minute models and their tests to dbt
+- [ ] Add CI with GitHub Actions, running `dbt build` on every push
+- [ ] Run the same dbt models on Snowflake, and compare runtime and cost with DuckDB
 - [ ] Backfill a longer history
-- [ ] Schedule the pipeline and add CI with GitHub Actions
+- [ ] Schedule the pipeline
 
 ## Data source and licence
 
