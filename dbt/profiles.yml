@@ -1,0 +1,7 @@
+fingrid:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ../fingrid.duckdb
+      threads: 4

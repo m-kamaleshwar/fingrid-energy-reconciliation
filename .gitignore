@@ -18,3 +18,10 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# DuckDB and dbt local files
+*.duckdb
+*.duckdb.wal
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/

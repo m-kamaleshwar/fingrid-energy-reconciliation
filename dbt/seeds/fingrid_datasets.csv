@@ -1,0 +1,9 @@
+name,dataset_id,interval_min
+production,192,3
+consumption,193,3
+north_swed,87,3
+cent_swed,89,3
+estonia,180,3
+norway,187,3
+prod_measurement,74,15
+cons_measurement,124,15

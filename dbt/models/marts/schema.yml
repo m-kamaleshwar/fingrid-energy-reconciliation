@@ -1,0 +1,9 @@
+version: 2
+models:
+  - name: recon_3min
+    description: Energy balance reconciliation for every expected 3-minute slot
+    columns:
+      - name: start_time
+        tests:
+          - unique
+          - not_null

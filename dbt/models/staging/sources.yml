@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: fingrid_readings
+        description: Raw Fingrid API rows, loaded unchanged by load_to_duckdb.py (UTC)
