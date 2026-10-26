@@ -1,3 +1,4 @@
 pandas
 requests
 snowflake-connector-python[pandas]
+dbt-duckdb
