@@ -1,6 +1,6 @@
 """Shared helpers for calling Fingrid's open data API.
 
-Used by reconcile_pandas.py and load_to_snowflake.py, so the fetching
+Used by reconcile_pandas.py and load_to_snowflake.py, load_to_duckdb.py, so the fetching
 logic exists in one place only.
 """
 import argparse
