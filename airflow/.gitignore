@@ -1,0 +1,16 @@
+# Secrets - never commit. Contains FERNET_KEY and any credentials.
+.env
+
+# Runtime output
+logs/
+*.log
+
+# Generated at container start
+config/airflow.cfg
+
+# Local backups
+*.bak
+
+# Python
+__pycache__/
+*.py[cod]
