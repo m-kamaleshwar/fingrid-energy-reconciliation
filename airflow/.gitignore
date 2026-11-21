@@ -1,9 +1,9 @@
 # Secrets - never commit. Contains FERNET_KEY and any credentials.
 .env
 
-# Runtime output
-logs/
-*.log
+# Runtime output, but keep the folder: Compose expects it to exist.
+logs/*
+!logs/.gitkeep
 
 # Generated at container start
 config/airflow.cfg

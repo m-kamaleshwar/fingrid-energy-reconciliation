@@ -40,9 +40,12 @@ backfills free.
 
 ## Setup
 
+Run everything from this `airflow/` directory. The compose file mounts the
+repo root (`..`) at `/opt/airflow/fingrid-repo`, so the DAG finds
+`load_to_snowflake.py` without any machine-specific paths.
+
 1. `cp .env.example .env` and set `FERNET_KEY`.
-2. Point the repo mount in `docker-compose.yaml` at your clone of
-   [fingrid-energy-reconciliation](https://github.com/m-kamaleshwar/fingrid-energy-reconciliation).
+2. Create the folders Compose expects: `mkdir -p logs plugins config`
 3. `docker compose build && docker compose up -d`
 4. Create the Airflow **Connection** `snowflake_fingrid` (type Snowflake; login,
    password, and `{"account": "..."}` in Extra) and the **Variable**

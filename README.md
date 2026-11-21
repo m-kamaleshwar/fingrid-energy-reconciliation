@@ -94,6 +94,28 @@ Those CSVs are committed to the repository on purpose. It means the report opens
 
 The pandas and Snowflake versions also agree on a second period, 1 to 6 October, including the breakdowns by status and by 15-minute window completeness.
 
+## Orchestration
+
+The Snowflake path runs daily under **Apache Airflow 3**, defined in
+[`airflow/`](airflow/). One DAG run covers one UTC day:
+
+| Task | What it does |
+|---|---|
+| `load_raw_to_snowflake` | Runs `load_to_snowflake.py` for the run's data interval |
+| `run_fingrid_pipeline`  | Calls `STG_FIN_GRID.OPS.RUN_FINGRID_PIPELINE` for the same window |
+
+The run for day D covers `[D 00:00, D+1 00:00)` and fires at 00:00 UTC on D+1.
+Because the loader replaces a window's rows before writing and the stored
+procedure recomputes that window, re-running a day is safe — which is what
+makes retries and backfills free rather than dangerous.
+
+Everything else — the pandas reconciliation, the dbt models on DuckDB, the
+Power BI exports — is still run by hand. Those exist to cross-check the
+Snowflake results, not to run nightly.
+
+See [`airflow/README.md`](airflow/README.md) to run it locally.
+
+
 ## Datasets
 
 | ID  | Dataset | Resolution | Used for |
@@ -128,6 +150,13 @@ fingrid-energy-reconciliation/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml              # unit tests, dbt build, and the docs site deployment
+├── airflow/                    # daily orchestration of the Snowflake path
+│   ├── README.md               # how the DAG works, and two settings that are easy to get wrong
+│   ├── Dockerfile              # Airflow 3.4 plus this project's dependencies
+│   ├── docker-compose.yaml     # the local stack
+│   ├── requirements-airflow.txt
+│   └── dags/
+│       └── fingrid_snowflake_daily.py
 ├── ci/
 │   └── make_sample_db.py       # builds a sample DuckDB file for CI, no API key needed
 ├── tests/
@@ -176,7 +205,7 @@ fingrid-energy-reconciliation/
 - [ ] Add the 15-minute models and their tests to dbt
 - [ ] Run the same dbt models on Snowflake, and compare runtime and cost with DuckDB
 - [ ] Backfill a longer history
-- [ ] Schedule the pipeline
+- [x] Schedule the pipeline daily with **Apache Airflow**, running the Snowflake path on a one-day data interval
 
 ---
 
