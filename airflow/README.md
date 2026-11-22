@@ -5,6 +5,9 @@ of Fingrid open data into `RAW.FINGRID_READINGS`, then run the Snowflake
 pipeline (CORE normalise, 15-minute aggregate, 3-minute and 15-minute RECON)
 for the same window.
 
+![Airflow overview](airflow_dag_overview.png)
+
+
 Airflow 3.4, CeleryExecutor, Docker Compose.
 
 ## The DAG
